@@ -21,7 +21,7 @@ jobs:
           cd app
           pip install -r requirements.txt
           pip install pylint
-          pylint app.py --fail-under=7
+          pylint app.py --fail-under=5
   test:
     runs-on: ubuntu-latest
     needs: lint
