@@ -1,0 +1,117 @@
+name: pyhton api cicd
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name:
+        run: |
+          cd app
+          pip install -r requirements.txt
+          pylint app.py --fail-under=7
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      matrix:
+        python-verions: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: install and test
+        run: |
+          cd app
+          pip install -r requirements.txt
+          pytest -v
+  security:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions.checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: install and scan
+        run: |
+          cd app
+          pip install safety
+          safety check -r requirements.txt || true
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: build and push
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/python-flask:latest .
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/python-flask:${{ github.sha }} .
+          docker push ${{ secrets.DOCKER_USERNAME }}/python-flask:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/python-flask:${{ github.sha }}
+
+  notify-success:
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: success()
+    steps:
+      - name: Notify success
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "✅ *Python Flask pipeline passed!*",
+              "attachments": [{
+                "color": "good",
+                "fields": [
+                  { "title": "Branch", "value": "${{ github.ref_name }}", "short": true },
+                  { "title": "By", "value": "${{ github.actor }}", "short": true }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: failure()
+    steps:
+      - name: Notify failure
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "❌ *Python Flask pipeline failed!*",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  { "title": "Branch", "value": "${{ github.ref_name }}", "short": true },
+                  { "title": "By", "value": "${{ github.actor }}", "short": true },
+                  { "title": "Logs", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
